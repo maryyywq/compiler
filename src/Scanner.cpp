@@ -1,4 +1,3 @@
-// Scanner.cpp - реализация класса сканера
 #include "defs.h"
 #include "Scanner.h"
 #include <stdio.h>
@@ -25,29 +24,26 @@ TScanner::TScanner(const char * FileName) {
     line = 1;
 }
 
-// вывод сообщения об ошибке и завершение работы
+// сообщение об ошибке (выбрасывается исключение единого типа TError)
 void TScanner::printError(const char * err, const char * lex) {
-    if (lex == NULL || lex[0] == '\0')
-        printf("Ошибка (строка %d): %s\n", line, err);
-    else
-        printf("Ошибка (строка %d): %s. Неверный фрагмент: \"%s\"\n",
-               line, err, lex);
-    exit(0);
+    std::string msg = err;
+    if (lex != NULL && lex[0] != '\0')
+        msg += std::string(". Неверный фрагмент: \"") + lex + "\"";
+    throw TError(msg, line);
 }
 
 // загрузка всего исходного модуля в буфер text
 void TScanner::getData(const char * FileName) {
     FILE * in = fopen(FileName, "r");
-    if (in == NULL) {
-        printf("Отсутствует входной файл %s\n", FileName);
-        exit(-1);
-    }
+    if (in == NULL)
+        throw TError(std::string("Отсутствует входной файл ") + FileName, 0);
+
     int i = 0;
     char c;
     while (fscanf(in, "%c", &c) != EOF) {
         if (i >= MAX_TEXT - 1) {
-            printf("Слишком большой размер исходного модуля\n");
-            break;
+            fclose(in);
+            throw TError("Слишком большой размер исходного модуля", 0);
         }
         text[i++] = c;
     }

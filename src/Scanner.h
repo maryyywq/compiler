@@ -1,6 +1,4 @@
-// Scanner.h - класс лексического анализатора
-#ifndef __SCANNER
-#define __SCANNER
+#pragma once
 
 #include "defs.h"
 
@@ -28,5 +26,3 @@ public:
     // загрузка исходного модуля
     void getData(const char * FileName);
 };
-
-#endif

@@ -1,7 +1,7 @@
-#ifndef __DEFS
-#define __DEFS
+#pragma once
 
 #include <string.h>
+#include <string>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -67,4 +67,12 @@ enum LEX_TYPE {
     T_ERR       = 200
 };
 
-#endif
+// Единое исключение компилятора: используется и лексическим,
+// и синтаксическим анализатором
+class TError {
+public:
+    std::string message;   // Текст сообщения об ошибке
+    int         line;      // Строка исходного модуля (0 - не применимо)
+
+    TError(const std::string & m, int l) : message(m), line(l) {}
+};
