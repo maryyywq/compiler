@@ -20,19 +20,28 @@ static int KeywordTypes[MAX_KEYW] = {
 // конструктор: загружает текст и ставит указатель в начало
 TScanner::TScanner(const char * FileName) {
     getData(FileName);
-    pos  = 0;
-    line = 1;
+    pos     = 0;
+    line    = 1;
+    tokPos  = 0;
+    tokLine = 1;
 }
 
-// сообщение об ошибке (выбрасывается исключение единого типа TError)
+// номер позиции в строке (с 1) для символа с индексом at, считается от предыдущего перевода строки
+int TScanner::ColOf(int at) {
+    int i = at;
+    while (i > 0 && text[i-1] != '\n') i--;
+    return at - i + 1;
+}
+
+// выбросить лексическую ошибку с указанием строки и позиции начала лексемы
 void TScanner::printError(const char * err, const char * lex) {
     std::string msg = err;
     if (lex != NULL && lex[0] != '\0')
         msg += std::string(". Неверный фрагмент: \"") + lex + "\"";
-    throw TError(msg, line);
+    throw TLexError(msg, tokLine, ColOf(tokPos));
 }
 
-// загрузка всего исходного модуля в буфер text
+// прочитать исходный модуль целиком в буфер text и добавить маркер конца
 void TScanner::getData(const char * FileName) {
     FILE * in = fopen(FileName, "r");
     if (in == NULL)
@@ -43,7 +52,7 @@ void TScanner::getData(const char * FileName) {
     while (fscanf(in, "%c", &c) != EOF) {
         if (i >= MAX_TEXT - 1) {
             fclose(in);
-            throw TError("Слишком большой размер исходного модуля", 0);
+            throw TLexError("Слишком большой размер исходного модуля", 0);
         }
         text[i++] = c;
     }
@@ -51,11 +60,15 @@ void TScanner::getData(const char * FileName) {
     fclose(in);
 }
 
-// основная функция сканирования
+// прочитать очередную лексему и вернуть её тип, изображение записывается в l
 int TScanner::Scanner(LEX l) {
     // очищаем буфер лексемы
     for (int i = 0; i < MAX_LEX; i++) l[i] = '\0';
     int i = 0;
+
+    // запомнить начало фрагмента, чтобы ошибка указывала на его позицию
+    tokPos  = pos;
+    tokLine = line;
 
     // пропуск незначащих символов и комментариев
     while (true) {
@@ -75,7 +88,6 @@ int TScanner::Scanner(LEX l) {
                 if (++len > MAX_COMMENT) {
                     printError("Слишком длинный комментарий "
                                "(макс. 150 символов)", "");
-                    return T_ERR;
                 }
                 pos++;
             }
@@ -91,14 +103,12 @@ int TScanner::Scanner(LEX l) {
                 if (++len > MAX_COMMENT) {
                     printError("Слишком длинный комментарий "
                                "(макс. 150 символов)", "");
-                    return T_ERR;
                 }
                 if (text[pos] == '\n') line++;
                 pos++;
             }
             if (text[pos] == '\0') {
                 printError("Незакрытый комментарий", "");
-                return T_ERR;
             }
             pos += 2;
             continue;
@@ -108,9 +118,15 @@ int TScanner::Scanner(LEX l) {
 
     // конец исходного модуля
     if (text[pos] == '\0') {
+        tokPos  = pos;
+        tokLine = line;
         l[0] = '\0';
         return T_END;
     }
+
+    // начало очередной лексемы - для сообщений об ошибках
+    tokPos  = pos;
+    tokLine = line;
 
     // идентификатор / ключевое слово / boolean
     if (isalpha((unsigned char)text[pos]) || text[pos] == '_') {
@@ -119,7 +135,6 @@ int TScanner::Scanner(LEX l) {
             if (++len > MAX_IDENT) {
                 printError("Слишком длинный идентификатор "
                            "(макс. 30 символов)", l);
-                return T_ERR;
             }
             l[i++] = text[pos];
             pos++;
@@ -150,7 +165,6 @@ int TScanner::Scanner(LEX l) {
             if (++len > MAX_CONST) {
                 printError("Слишком длинная константа "
                            "(макс. 30 символов)", l);
-                return T_ERR;
             }
             l[i++] = text[pos];
             pos++;
@@ -162,7 +176,6 @@ int TScanner::Scanner(LEX l) {
             if (++len > MAX_CONST) {
                 printError("Слишком длинная константа "
                            "(макс. 30 символов)", l);
-                return T_ERR;
             }
             l[i++] = text[pos];
             pos++;
@@ -170,7 +183,6 @@ int TScanner::Scanner(LEX l) {
                 if (++len > MAX_CONST) {
                     printError("Слишком длинная константа "
                                "(макс. 30 символов)", l);
-                    return T_ERR;
                 }
                 l[i++] = text[pos];
                 pos++;
@@ -245,7 +257,6 @@ int TScanner::Scanner(LEX l) {
             }
             l[1]='\0';
             printError("Ожидался символ '&' после '&'", l);
-            return T_ERR;
 
         case '|':
             l[0]=c; pos++;
@@ -255,12 +266,10 @@ int TScanner::Scanner(LEX l) {
             }
             l[1]='\0';
             printError("Ожидался символ '|' после '|'", l);
-            return T_ERR;
 
         default:
             l[0] = c; l[1] = '\0';
             pos++;
             printError("Неверный символ", l);
-            return T_ERR;
     }
 }

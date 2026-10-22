@@ -1,15 +1,19 @@
 CXX      = g++
 CXXFLAGS = -std=c++11 -Wall -Wextra -O2 -Isrc
-TARGET   = scanner
+TARGET   = compiler
 TESTBIN  = tests/run_tests
+SEMBIN   = tests/run_sem_tests
 
-SRCS = src/main.cpp src/Scanner.cpp src/Parser.cpp
+SRCS = src/main.cpp src/Scanner.cpp src/Parser.cpp src/SemTree.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 # автотесты синтаксического анализатора
-TEST_SRCS = tests/tests.cpp src/Parser.cpp src/Scanner.cpp
+TEST_SRCS = tests/tests.cpp src/Parser.cpp src/Scanner.cpp src/SemTree.cpp
 
-HEADERS = src/defs.h src/Scanner.h src/Parser.h
+# автотесты семантического анализатора и семантического дерева
+SEM_SRCS  = tests/sem_tests.cpp src/Parser.cpp src/Scanner.cpp src/SemTree.cpp
+
+HEADERS = src/defs.h src/Scanner.h src/Parser.h src/SemTree.h
 
 FILE ?= input.txt
 
@@ -25,13 +29,18 @@ $(TARGET): $(OBJS)
 $(TESTBIN): $(TEST_SRCS) $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o $@ $(TEST_SRCS)
 
+# сборка автотестов семантического анализатора
+$(SEMBIN): $(SEM_SRCS) $(HEADERS)
+	$(CXX) $(CXXFLAGS) -o $@ $(SEM_SRCS)
+
 run: $(TARGET)
 	./$(TARGET) $(FILE)
 
-test: $(TESTBIN)
+test: $(TESTBIN) $(SEMBIN)
 	./$(TESTBIN)
+	./$(SEMBIN)
 
 clean:
-	rm -f $(OBJS) $(TARGET) $(TESTBIN)
+	rm -f $(OBJS) $(TARGET) $(TESTBIN) $(SEMBIN)
 
 .PHONY: all run test clean

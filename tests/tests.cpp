@@ -1,10 +1,3 @@
-// tests.cpp - автотесты синтаксического анализатора (лабораторная №5)
-// Проверяются все случаи применения грамматики варианта 9: корректные
-// конструкции и граничные (ошибочные) ситуации
-//
-// Тесты построены так: исходный модуль записывается во временный файл,
-// затем выполняется разбор. Корректный модуль должен разбираться без
-// ошибок, ошибочный - приводить к исключению TError
 #include "defs.h"
 #include "Scanner.h"
 #include "Parser.h"
@@ -29,20 +22,28 @@ static const char * TmpFile() {
     return path.c_str();
 }
 
-// Разобрать текст исходного модуля; вернуть true, если он принят
-static bool Accepts(const std::string & src) {
+// Разобрать модуль без семантического контроля, synErr - ошибка имеет синтаксический вид
+static bool Accepts(const std::string & src, bool * synErr = NULL) {
     std::ofstream out(TmpFile(), std::ios::binary | std::ios::trunc);
     out << src;
     out.close();
 
     TScanner * sc = new TScanner(TmpFile());
-    TParser  * p  = new TParser(sc);
+    TParser  * p  = new TParser(sc, false);
+
+    if (synErr)
+        *synErr = false;
 
     bool ok = true;
     try {
         p->Program();
     }
-    catch (TError &) {
+    catch (TSynError &) {          // ожидаемый вид ошибки для этих тестов
+        ok = false;
+        if (synErr)
+            *synErr = true;
+    }
+    catch (TError &) {             // лексическая или иная ошибка
         ok = false;
     }
 
@@ -558,8 +559,13 @@ int main() {
     int failed = 0;
 
     for (size_t i = 0; i < cases.size(); i++) {
-        bool got = Accepts(cases[i].src);
+        bool synErr = false;
+        bool got = Accepts(cases[i].src, &synErr);
         bool ok  = (got == cases[i].valid);
+
+        // отвергнутая программа должна быть отвергнута именно синтаксическим анализатором
+        if (ok && !cases[i].valid && !synErr)
+            ok = false;
 
         if (ok) {
             passed++;
@@ -572,6 +578,8 @@ int main() {
             printf("       ожидалось: %s, получено: %s\n",
                    cases[i].valid ? "принять" : "отвергнуть",
                    got ? "принято" : "отвергнуто");
+            if (ok == false && !cases[i].valid && !synErr)
+                printf("       ошибка не синтаксическая\n");
         }
     }
 

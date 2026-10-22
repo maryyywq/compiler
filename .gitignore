@@ -1,0 +1,9 @@
+# артефакты сборки
+*.o
+compiler
+tests/run_tests
+tests/run_sem_tests
+
+# временные файлы
+.scratch/
+.venv/

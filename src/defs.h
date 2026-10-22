@@ -6,19 +6,23 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-// максимальные размеры буферов
-#define MAX_TEXT    100000   
-#define MAX_LEX     100      
-#define MAX_KEYW    10      
+// максимальный размер исходного модуля в символах
+#define MAX_TEXT 100000
+// максимальная длина одной лексемы вместе с завершающим нулём
+#define MAX_LEX 100
+// количество ключевых слов в таблице
+#define MAX_KEYW 10
 
-// ограничения на длину лексем
-#define MAX_IDENT   30       
-#define MAX_CONST   30       
-#define MAX_COMMENT 150      
+// максимальная длина идентификатора
+#define MAX_IDENT 30
+// максимальная длина числовой константы
+#define MAX_CONST 30
+// максимальная длина комментария
+#define MAX_COMMENT 150
 typedef char LEX[MAX_LEX];
 typedef char TypeMod[MAX_TEXT];
 
-// коды типов лексем
+// коды типов лексем, которые возвращает сканер
 enum LEX_TYPE {
     KW_INT      = 1,
     KW_FLOAT    = 2,
@@ -63,16 +67,41 @@ enum LEX_TYPE {
     OR          = 63,
     NOT         = 64,
 
-    T_END       = 100,
-    T_ERR       = 200
+    T_END       = 100
 };
 
-// Единое исключение компилятора: используется и лексическим,
-// и синтаксическим анализатором
+// базовое исключение компилятора: текст сообщения, место ошибки и вид ошибки
 class TError {
 public:
-    std::string message;   // Текст сообщения об ошибке
-    int         line;      // Строка исходного модуля (0 - не применимо)
+    std::string message;   // текст сообщения об ошибке
+    int         line;      // строка исходного модуля, 0 - не применимо
+    int         col;       // позиция в строке
 
-    TError(const std::string & m, int l) : message(m), line(l) {}
+    TError(const std::string & m, int l, int c = 0)
+        : message(m), line(l), col(c) {}
+    virtual ~TError() {}
+
+    // название вида ошибки для вывода диагностики
+    virtual const char * Kind() const { return "Ошибка"; }
+};
+
+// лексическая ошибка: недопустимый символ, слишком длинная лексема или незакрытый комментарий
+class TLexError : public TError {
+public:
+    TLexError(const std::string & m, int l, int c = 0) : TError(m, l, c) {}
+    const char * Kind() const { return "Лексическая ошибка"; }
+};
+
+// синтаксическая ошибка: входной текст не соответствует правилам грамматики
+class TSynError : public TError {
+public:
+    TSynError(const std::string & m, int l, int c = 0) : TError(m, l, c) {}
+    const char * Kind() const { return "Синтаксическая ошибка"; }
+};
+
+// семантическая ошибка: нарушено контекстное условие языка
+class TSemError : public TError {
+public:
+    TSemError(const std::string & m, int l, int c = 0) : TError(m, l, c) {}
+    const char * Kind() const { return "Семантическая ошибка"; }
 };

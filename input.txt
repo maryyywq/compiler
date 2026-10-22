@@ -1,4 +1,90 @@
-void main()
-{
-    1 + 2;
+class MyClass {
+    int   f_int;
+    float f_float;
+    bool  f_bool;
+
+    void my_method() {
+        f_int   = 0;
+        f_float = 0.0;
+        f_bool  = false;
+        
+        // использование полей как операндов внутри метода
+        f_int = f_int + 5;
+        if (f_bool) {
+            f_float = 1.5;
+        }
+    }
+}
+
+int global_var = 100;
+
+void main() {
+    // Описание данных всех типов
+    int   a, b, c;
+    float f, g;
+    bool  t, u;
+
+    // Инициализация константами (целые, вещественные, логические)
+    a = 10;
+    b = 3;
+    f = 1.1;
+    g = 2.2;
+    t = true;
+    u = false;
+
+    // --- Арифметические операции ---
+    c = a + b;
+    c = a - b;
+    c = a * b;
+    c = a / b;
+    c = a % b;
+    
+    f = f + g;
+    f = f - g;
+    f = f * g;
+    f = f / g;
+    f = -f;
+
+    // --- Все операции сравнения ---
+    t = a < b;
+    t = a <= b;
+    t = a > b;
+    t = a >= b;
+    t = a == b;
+    t = a != b;
+
+    // --- Все логические операции ---
+    t = t && u;
+    t = t || u;
+    t = !u;
+
+    // --- Оператор if (простой и с else) ---
+    if (t) {
+        a = 1;
+    }
+    
+    if (a < b && t || u) {
+        a = 2;
+    } else {
+        a = 3;
+    }
+
+    // --- Описание объекта класса ---
+    MyClass obj;
+    
+    // --- Использование полей класса как операндов ---
+    obj.f_int   = a;
+    obj.f_float = f;
+    obj.f_bool  = t;
+    
+    c = obj.f_int + global_var;
+    
+    // --- Вызов void-метода без параметров ---
+    obj.my_method();
+    
+    // --- Составной оператор (вложенный блок) ---
+    {
+        int local_x = 42;
+        c = local_x;
+    }
 }

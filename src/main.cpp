@@ -1,79 +1,99 @@
 #include "defs.h"
 #include "Scanner.h"
 #include "Parser.h"
+#include "SemTree.h"
 #include <stdio.h>
 
-// Имя исходного модуля: аргумент командной строки или input.txt
+// имя исходного модуля берётся из командной строки, по умолчанию это input.txt
 static const char * SourceFile(int argc, char * argv[]) {
     return (argc > 1) ? argv[1] : "input.txt";
 }
 
-// Печать сообщения об ошибке
-static void ReportError(const char * kind, const TError & e) {
-    if (e.line > 0)
-        printf("%s ошибка (строка %d): %s\n", kind, e.line, e.message.c_str());
-    else
-        printf("%s ошибка: %s\n", kind, e.message.c_str());
+// печать ошибки: вид ошибки, строка, позиция в строке и текст сообщения
+static void ReportError(const TError & e) {
+    printf("%s", e.Kind());
+    if (e.line > 0 && e.col > 0)
+        printf(" (строка %d, позиция %d)", e.line, e.col);
+    else if (e.line > 0)
+        printf(" (строка %d)", e.line);
+    printf(": %s\n", e.message.c_str());
 }
 
-// Первый этап - лексический анализ: модуль сканируется целиком,
-// полученные лексемы выводятся на экран
+// лексический анализ: модуль сканируется целиком, ошибки выбрасывает сканер
 static void LexicalAnalysis(TScanner * sc) {
-    printf("Лексический анализ:\n");
-
-    int type;
     LEX lex;
-    do {
-        type = sc->Scanner(lex);
-        //printf("  %-15s -> %-12s (код %d)\n", lex, TokenName(type), type);
-    } while (type != T_END && type != T_ERR);
+    while (sc->Scanner(lex) != T_END)
+        ;   // изображение лексемы не нужно, важно лишь дойти до конца модуля
 }
 
-// Второй этап - синтаксический анализ
+// синтаксический анализ
 static void SyntaxAnalysis(TScanner * sc) {
-    TParser parser(sc);
+    TParser parser(sc, false);
     parser.Program();
+}
+
+// семантический анализ: тот же разбор, но с контролем контекстных условий
+static void SemanticAnalysis(TScanner * sc) {
+    TParser parser(sc, true);
+    parser.Program();
+    printf("Семантический анализ выполнен\nОшибок нет\n\n");
+    parser.SemTreeRoot()->Print();
+}
+
+// вернуть сканер в начало модуля перед очередным проходом
+static void Rewind(TScanner * sc) {
+    sc->setPos(0);
+    sc->setLine(1);
 }
 
 int main(int argc, char * argv[]) {
     const char * fileName = SourceFile(argc, argv);
     TScanner * sc = NULL;
 
-    // Чтение исходного модуля
+    // чтение исходного модуля, ошибка здесь относится к этапу подготовки
     try {
         sc = new TScanner(fileName);
     }
     catch (TError & e) {
-        printf("Ошибка: %s\n", e.message.c_str());
+        ReportError(e);
         return 1;
     }
 
-    // Этап 1: лексический анализ
+    // первый этап: лексический анализ
     try {
         LexicalAnalysis(sc);
+        printf("Лексический анализ выполнен\nОшибок нет\n");
     }
-    catch (TError & e) {
-        ReportError("Лексическая", e);
+    catch (TLexError & e) {
+        ReportError(e);
         delete sc;
         return 1;
     }
 
-    // Возвращаемся в начало текста для грамматического разбора
-    sc->setPos(0);
-    sc->setLine(1);
+    Rewind(sc);
 
-    // Этап 2: синтаксический анализ
-    printf("\nСинтаксический анализ:\n");
+    // второй этап: синтаксический анализ
     try {
         SyntaxAnalysis(sc);
+        printf("Синтаксический анализ выполнен\nОшибок нет\n");
     }
-    catch (TError & e) {
-        ReportError("Синтаксическая", e);
+    catch (TSynError & e) {
+        ReportError(e);
         delete sc;
         return 1;
     }
 
-    printf("Успешно: ошибок нет\n");
+    Rewind(sc);
+
+    // третий этап: семантический анализ и печать построенного дерева
+    try {
+        SemanticAnalysis(sc);
+    }
+    catch (TSemError & e) {
+        ReportError(e);
+        delete sc;
+        return 1;
+    }
 
     delete sc;
     return 0;
