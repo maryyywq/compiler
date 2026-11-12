@@ -105,3 +105,10 @@ public:
     TSemError(const std::string & m, int l, int c = 0) : TError(m, l, c) {}
     const char * Kind() const { return "Семантическая ошибка"; }
 };
+
+// ошибка выполнения: деление на ноль, неинициализированная переменная, неподдерживаемая конструкция
+class TRunError : public TError {
+public:
+    TRunError(const std::string & m, int l, int c = 0) : TError(m, l, c) {}
+    const char * Kind() const { return "Ошибка выполнения"; }
+};

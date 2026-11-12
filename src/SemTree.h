@@ -18,6 +18,26 @@ enum DATA_TYPE {
 // Запись семантической таблицы (узел семантического дерева)
 class Tree;
 
+// значение данных, вычисленное интерпретатором
+struct Value {
+    DATA_TYPE type;   // тип значения
+    bool      has;    // значение вычислено
+    union {
+        int   i;      // значение для TYPE_INT
+        float f;      // значение для TYPE_FLOAT
+        bool  b;      // значение для TYPE_BOOL
+    };
+
+    Value() : type(TYPE_VOID), has(false), i(0) {}
+
+    static Value Int(int v)     { Value r; r.type = TYPE_INT;   r.has = true; r.i = v; return r; }
+    static Value Float(float v) { Value r; r.type = TYPE_FLOAT; r.has = true; r.f = v; return r; }
+    static Value Bool(bool v)   { Value r; r.type = TYPE_BOOL;  r.has = true; r.b = v; return r; }
+};
+
+// текстовое представление значения для вывода и тестов: 5, 2.5, true
+std::string ValueToString(const Value & v);
+
 struct SemNode {
     std::string id;       // имя идентификатора ("" для области видимости)
     DATA_TYPE   type;     // тип объекта
@@ -26,6 +46,7 @@ struct SemNode {
     int         col;      // позиция в строке (для сообщений об ошибках)
     SemNode    *ref;      // ссылка на запись класса 
     Tree       *self;     // вершина дерева, в которой находится запись
+    Value       val;      // значение, вычисленное интерпретатором
 
     SemNode(const std::string & a, DATA_TYPE t, int l, int c,
             SemNode * r = NULL)
@@ -63,7 +84,7 @@ public:
                          int line, int col);
     int    DupControl(Tree * addr, const std::string & a);
     Tree * SemEnterBlock(int line, int col);
-    void   SemExitBlock();
+    void   SemExitBlock(bool freeBlock = false);
 
     // Класс, в теле которого находится текущая область видимости, или NULL вне методов
     SemNode * EnclosingClass();
@@ -71,6 +92,10 @@ public:
     // Печать дерева (по умолчанию - в стандартный поток вывода)
     void Print(FILE * out = stdout);
     void PrintRec(int level, FILE * out);
+
+    // Печать дерева со значениями переменных и пометкой текущей области
+    void PrintTrace(FILE * out = stdout);
+    void PrintTraceRec(int level, FILE * out);
 };
 
 // Текстовое имя типа (для сообщений об ошибках и печати дерева)

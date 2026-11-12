@@ -4,6 +4,17 @@
 // Текущая область видимости (текущая вершина семантического дерева)
 Tree * Tree::Cur = NULL;
 
+// Текстовое представление значения для вывода и тестов
+std::string ValueToString(const Value & v) {
+    char buf[64];
+    switch (v.type) {
+        case TYPE_INT:   snprintf(buf, sizeof(buf), "%d", v.i); return buf;
+        case TYPE_FLOAT: snprintf(buf, sizeof(buf), "%g", v.f); return buf;
+        case TYPE_BOOL:  return v.b ? "true" : "false";
+        default:         return "?";
+    }
+}
+
 // Текстовое имя типа значения
 const char * TypeName(DATA_TYPE t) {
     switch (t) {
@@ -32,7 +43,8 @@ std::string TypeNameOf(const SemNode * n) {
     return TypeName(n->type);
 }
 
-// Совместимость типов при присваивании: int и float приводятся друг к другу, bool только к bool, объекты - того же класса
+// Совместимость типов при присваивании: int и float приводятся друг к другу,
+// bool только к bool, объекты - того же класса
 bool TypesCompatible(DATA_TYPE dst, SemNode * dstCls,
                      DATA_TYPE src, SemNode * srcCls) {
     if (dst == src) {
@@ -224,10 +236,34 @@ Tree * Tree::SemEnterBlock(int line, int col) {
     return b;
 }
 
-// Выход из текущей области видимости
-void Tree::SemExitBlock() {
-    if (Cur != NULL && Cur->Up != NULL)
-        Cur = Cur->Up;
+// Выход из текущей области видимости; при freeBlock записи блока удаляются
+void Tree::SemExitBlock(bool freeBlock) {
+    if (Cur == NULL || Cur->Up == NULL)
+        return;
+
+    Tree * block  = Cur;
+    Tree * parent = block->Up;
+    Cur = parent;
+
+    if (!freeBlock)
+        return;
+
+    // отсоединить блок от родителя, чтобы не удалить соседние записи
+    if (parent->Left == block) {
+        parent->Left = block->Right;
+    }
+    else {
+        Tree * prev = parent->Left;
+        while (prev != NULL && prev->Right != block)
+            prev = prev->Right;
+        if (prev != NULL)
+            prev->Right = block->Right;
+    }
+    block->Right = NULL;
+    delete block;
+
+    // после освобождения памяти значение Cur должно указывать на живую вершину
+    Cur = parent;
 }
 
 // Печать дерева (от корня) в поток out
@@ -244,6 +280,51 @@ void Tree::Print(FILE * out) {
 }
 
 // Печать всех потомков вершины с отступом level
+// Печать дерева со значениями переменных и пометкой текущей области видимости
+void Tree::PrintTrace(FILE * out) {
+    Tree * root = Cur;
+    while (root != NULL && root->Up != NULL)
+        root = root->Up;
+    if (root == NULL)
+        return;
+
+    fprintf(out, "семантическое дерево:\n");
+    for (int i = 0; i < 1; i++)
+        fprintf(out, "  ");
+    fprintf(out, "{ глобальная область (строка %d)",
+            root->n ? root->n->line : 1);
+    if (root == Cur)
+        fprintf(out, "   <-- текущая область");
+    fprintf(out, "\n");
+    root->PrintTraceRec(2, out);
+}
+
+// Печать потомков вершины со значениями переменных и пометкой текущей области
+void Tree::PrintTraceRec(int level, FILE * out) {
+    for (Tree * p = Left; p != NULL; p = p->Right) {
+        for (int i = 0; i < level; i++)
+            fprintf(out, "  ");
+
+        if (p->n == NULL) {
+            fprintf(out, "?\n");
+        }
+        else if (p->n->type == TYPE_SCOPE) {
+            fprintf(out, "{ блок (строка %d, позиция %d)",
+                    p->n->line, p->n->col);
+        }
+        else {
+            fprintf(out, "%s : %s", p->n->id.c_str(), TypeNameOf(p->n).c_str());
+            if (p->n->val.has)
+                fprintf(out, " = %s", ValueToString(p->n->val).c_str());
+            fprintf(out, " (строка %d, позиция %d)", p->n->line, p->n->col);
+        }
+        if (p == Cur)
+            fprintf(out, "   <-- текущая область");
+        fprintf(out, "\n");
+        p->PrintTraceRec(level + 1, out);
+    }
+}
+
 void Tree::PrintRec(int level, FILE * out) {
     for (Tree * p = Left; p != NULL; p = p->Right) {
         for (int i = 0; i < level; i++)

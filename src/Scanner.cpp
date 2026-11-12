@@ -80,8 +80,10 @@ int TScanner::Scanner(LEX l) {
         }
         if (text[pos] == '\n') { line++; pos++; continue; }
 
-        // однострочный комментарий 
+        // однострочный комментарий
         if (text[pos] == '/' && text[pos+1] == '/') {
+            tokPos  = pos;
+            tokLine = line;
             pos += 2;
             int len = 0;
             while (text[pos] != '\n' && text[pos] != '\0') {
@@ -94,8 +96,10 @@ int TScanner::Scanner(LEX l) {
             continue;
         }
 
-        // многострочный комментарий 
+        // многострочный комментарий
         if (text[pos] == '/' && text[pos+1] == '*') {
+            tokPos  = pos;
+            tokLine = line;
             pos += 2;
             int len = 0;
             while (text[pos] != '\0' &&

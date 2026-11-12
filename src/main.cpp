@@ -2,12 +2,8 @@
 #include "Scanner.h"
 #include "Parser.h"
 #include "SemTree.h"
+#include "Interp.h"
 #include <stdio.h>
-
-// имя исходного модуля берётся из командной строки, по умолчанию это input.txt
-static const char * SourceFile(int argc, char * argv[]) {
-    return (argc > 1) ? argv[1] : "input.txt";
-}
 
 // печать ошибки: вид ошибки, строка, позиция в строке и текст сообщения
 static void ReportError(const TError & e) {
@@ -40,6 +36,14 @@ static void SemanticAnalysis(TScanner * sc) {
     parser.SemTreeRoot()->Print();
 }
 
+// четвёртый этап: интерпретация присваиваний и выражений
+static void Interpretation(TScanner * sc, bool treeTrace) {
+    printf("\nИнтерпретация:\n");
+    TParser parser(sc, true, true, treeTrace);
+    parser.Program();
+    printf("Интерпретация выполнена\nОшибок нет\n");
+}
+
 // вернуть сканер в начало модуля перед очередным проходом
 static void Rewind(TScanner * sc) {
     sc->setPos(0);
@@ -47,7 +51,16 @@ static void Rewind(TScanner * sc) {
 }
 
 int main(int argc, char * argv[]) {
-    const char * fileName = SourceFile(argc, argv);
+    // аргументы: имя модуля и необязательный ключ --tree для трассировки дерева
+    const char * fileName = "input.txt";
+    bool treeTrace = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--tree") == 0 || strcmp(argv[i], "-t") == 0)
+            treeTrace = true;
+        else
+            fileName = argv[i];
+    }
+
     TScanner * sc = NULL;
 
     // чтение исходного модуля, ошибка здесь относится к этапу подготовки
@@ -90,6 +103,23 @@ int main(int argc, char * argv[]) {
         SemanticAnalysis(sc);
     }
     catch (TSemError & e) {
+        ReportError(e);
+        delete sc;
+        return 1;
+    }
+
+    Rewind(sc);
+
+    // четвёртый этап: интерпретация программы
+    try {
+        Interpretation(sc, treeTrace);
+    }
+    catch (TRunError & e) {
+        ReportError(e);
+        delete sc;
+        return 1;
+    }
+    catch (TError & e) {
         ReportError(e);
         delete sc;
         return 1;

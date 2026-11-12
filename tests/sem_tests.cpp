@@ -1,4 +1,4 @@
-// Автотесты семантики варианта 9: условия читаются из tests/test_programs.txt, дерево проверяется напрямую
+// Автотесты семантики варианта 9: условия читаются из tests/sem_programs.txt, дерево проверяется напрямую
 #include "defs.h"
 #include "Scanner.h"
 #include "Parser.h"
@@ -165,12 +165,20 @@ static bool LoadCases(const char * path, std::vector<ProgramCase> & cases) {
                 return false;
             active = true;
         }
+        else if (line.rfind("// КОНЕЦ ПРОГРАММЫ", 0) == 0) {
+            if (active)
+                cases.push_back(cur);
+            active = false;
+        }
         else if (active) {
             cur.src += line + "\n";
         }
     }
     if (active)
         cases.push_back(cur);
+    for (size_t i = 0; i < cases.size(); i++)
+        if (!cases[i].src.empty() && cases[i].src[cases[i].src.size() - 1] == '\n')
+            cases[i].src.erase(cases[i].src.size() - 1);
     return true;
 }
 
@@ -521,7 +529,7 @@ static void RunStructureTests() {
 }
 
 int main(int argc, char * argv[]) {
-    const char * path = (argc > 1) ? argv[1] : "tests/test_programs.txt";
+    const char * path = (argc > 1) ? argv[1] : "tests/sem_programs.txt";
 
     RunProgramTests(path);
     RunTreeTests();

@@ -3,34 +3,42 @@
 #include "defs.h"
 #include "Scanner.h"
 #include "SemTree.h"
+#include "Interp.h"
 
 // тип значения, вычисленный при разборе, вместе со ссылкой на запись класса
 struct TypeInfo {
     DATA_TYPE type;
     SemNode * cls;
+    bool      fromComparison;  // true - результат операции сравнения (bool, приводимый к числу)
 
-    TypeInfo(DATA_TYPE t = TYPE_VOID, SemNode * c = NULL)
-        : type(t), cls(c) {}
+    TypeInfo(DATA_TYPE t = TYPE_VOID, SemNode * c = NULL, bool fc = false)
+        : type(t), cls(c), fromComparison(fc) {}
 };
 
 // сведения о левом выражении: тип, объект для вызова метода, допустимость присваивания и позиция
 struct LValueInfo {
     TypeInfo  t;           // тип значения левого выражения
-    SemNode * obj;         // запись объекта, к которому относится обращение ".метод"
+    SemNode * obj;         // запись переменной или последнего поля цепочки
     bool      assignable;  // можно ли присваивать значение (переменная или поле)
+    bool      simple;      // true - простая переменная без обращений к полям
     int       line, col;   // позиция начала левого выражения
 
-    LValueInfo() : obj(NULL), assignable(false), line(0), col(0) {}
+    LValueInfo() : obj(NULL), assignable(false), simple(true), line(0), col(0) {}
 };
 
 // синтаксический и семантический анализатор, построенный методом рекурсивного спуска
 class TParser {
 private:
-    TScanner * sc;     // лексический анализатор
-    Tree     * root;   // корень семантического дерева (глобальная область)
-    bool       semOn;  // выполнять ли семантический контроль
-    int        t;      // тип текущей лексемы
-    LEX        lex;    // изображение текущей лексемы
+    TScanner * sc;       // лексический анализатор
+    Tree     * root;     // корень семантического дерева (глобальная область)
+    bool       semOn;    // выполнять ли семантический контроль
+    bool       interpOn; // выполнять ли интерпретацию (вычисление значений)
+    bool       treeTrace;// печатать ли дерево при входе в блок и выходе из него
+    bool       exec;     // флаг интерпретации: выполняется ли текущий фрагмент
+    const char * scope;  // имя текущей области для трассировки: global или main
+    Value      lastValue;// значение последнего разобранного выражения
+    int        t;        // тип текущей лексемы
+    LEX        lex;      // изображение текущей лексемы
 
     // переход к следующей лексеме и проверка текущей
     void next();
@@ -83,7 +91,8 @@ private:
     std::string TypeStr(const TypeInfo & ti);
 
 public:
-    TParser(TScanner * s, bool semantics = true);
+    TParser(TScanner * s, bool semantics = true, bool interpret = false,
+            bool treeTrace = false);
     ~TParser();
 
     // 1) программа - аксиома грамматики, разбирается до конца модуля

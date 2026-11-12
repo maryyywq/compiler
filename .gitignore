@@ -3,6 +3,7 @@
 compiler
 tests/run_tests
 tests/run_sem_tests
+tests/run_interp_tests
 
 # временные файлы
 .scratch/
