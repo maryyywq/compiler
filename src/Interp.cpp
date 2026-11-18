@@ -1,5 +1,6 @@
 #include "Interp.h"
 #include <stdio.h>
+#include <limits.h>
 
 // по умолчанию трассировка присваиваний печатается в стандартный поток вывода
 FILE * TInterpreter::out = stdout;
@@ -78,17 +79,24 @@ Value TInterpreter::Arith(const std::string & op, const Value & a,
             throw TRunError("операция \"%\" допустима только для целых", line, col);
         if (b.i == 0)
             throw TRunError("остаток от деления на ноль", line, col);
+        if (a.i == INT_MIN && b.i == -1)
+            return Value::Int(0);
         return Value::Int(a.i % b.i);
     }
 
     // оба операнда целые - вычисляем в целых
     if (a.type == TYPE_INT && b.type == TYPE_INT) {
-        if (op == "+") return Value::Int(a.i + b.i);
-        if (op == "-") return Value::Int(a.i - b.i);
-        if (op == "*") return Value::Int(a.i * b.i);
+        // + - * выполняются в беззнаковых числах: переполнение даёт
+        // «заворот» по модулю 2^32 без неопределённого поведения
+        unsigned ua = (unsigned)a.i, ub = (unsigned)b.i;
+        if (op == "+") return Value::Int((int)(ua + ub));
+        if (op == "-") return Value::Int((int)(ua - ub));
+        if (op == "*") return Value::Int((int)(ua * ub));
         if (op == "/") {
             if (b.i == 0)
                 throw TRunError("деление на ноль", line, col);
+            if (a.i == INT_MIN && b.i == -1)
+                throw TRunError("переполнение при делении", line, col);
             return Value::Int(a.i / b.i);
         }
     }
@@ -174,8 +182,29 @@ Value TInterpreter::Unary(const std::string & op, const Value & a,
     if (op == "+")
         return a;
     if (op == "-")
-        return a.type == TYPE_INT ? Value::Int(-a.i) : Value::Float(-a.f);
+        return a.type == TYPE_INT ? Value::Int((int)(0u - (unsigned)a.i)) : Value::Float(-a.f);
     throw TRunError("неизвестная унарная операция \"" + op + "\"", line, col);
+}
+
+// напечатать строку трассировки присваивания
+void TInterpreter::TraceAssign(const std::string & name, const std::string & value,
+                               const std::string & type, int line, int col,
+                               const char * scope) {
+    if (out != NULL)
+        fprintf(out, "DEBUG: [%s] (строка %d:%d) Присваивание: %s = %s (%s)\n",
+                scope ? scope : "?", line, col, name.c_str(), value.c_str(),
+                type.c_str());
+}
+
+// напечатать строку трассировки копирования поля объекта
+void TInterpreter::TraceCopy(const std::string & dst, const std::string & src,
+                             const std::string & value, const std::string & type,
+                             int line, int col, const char * scope) {
+    if (out != NULL)
+        fprintf(out, "DEBUG: [%s] (строка %d:%d) Копирование: %s = %s, "
+                     "значение %s (%s)\n",
+                scope ? scope : "?", line, col, dst.c_str(), src.c_str(),
+                value.c_str(), type.c_str());
 }
 
 // записать значение в переменную: приведение к типу переменной и трассировка
@@ -183,28 +212,62 @@ void TInterpreter::Assign(SemNode * var, const Value & v, int line, int col,
                           const char * scope) {
     if (var == NULL)
         throw TRunError("нет записи переменной для присваивания", line, col);
-    if (var->type != TYPE_INT && var->type != TYPE_FLOAT && var->type != TYPE_BOOL)
-        throw TRunError("интерпретация объектов и методов не поддерживается", line, col);
+    if (var->type != TYPE_INT && var->type != TYPE_FLOAT &&
+        var->type != TYPE_BOOL && var->type != TYPE_OBJECT)
+        throw TRunError("значение этого типа нельзя прочитать", line, col);
 
     Value cv = Convert(v, var->type, line, col);
     var->val = cv;
 
     // простейший отладчик интерпретатора: печатаем имя и присвоенное значение
-    if (out != NULL)
-        fprintf(out, "DEBUG: [%s] (строка %d:%d) Присваивание: %s = %s (%s)\n",
-                scope, line, col, var->id.c_str(),
-                ValueToString(cv).c_str(), TypeName(cv.type));
+    TraceAssign(var->id, ValueToString(cv), TypeName(cv.type), line, col, scope);
 }
 
 // прочитать значение переменной
 Value TInterpreter::Load(const SemNode * var, int line, int col) {
     if (var == NULL)
         throw TRunError("нет записи переменной", line, col);
-    if (var->type != TYPE_INT && var->type != TYPE_FLOAT && var->type != TYPE_BOOL)
-        throw TRunError("интерпретация объектов и методов не поддерживается", line, col);
+    if (var->type != TYPE_INT && var->type != TYPE_FLOAT &&
+        var->type != TYPE_BOOL && var->type != TYPE_OBJECT)
+        throw TRunError("значение этого типа нельзя прочитать", line, col);
     if (!var->val.has)
         throw TRunError("переменная \"" + var->id + "\" не инициализирована", line, col);
     return var->val;
+}
+
+// прочитать значение поля объекта
+Value TInterpreter::LoadField(TObject * obj, const SemNode * field,
+                              int line, int col) {
+    if (obj == NULL)
+        throw TRunError("обращение к полю несуществующего объекта", line, col);
+
+    Value * v = obj->Find(const_cast<SemNode *>(field));
+    if (v == NULL)
+        throw TRunError("в объекте класса \"" + obj->clsName +
+                        "\" нет поля \"" + field->id + "\"", line, col);
+    if (!v->has)
+        throw TRunError("поле \"" + field->id + "\" объекта класса \"" +
+                        obj->clsName + "\" не инициализировано", line, col);
+    return *v;
+}
+
+// записать значение в поле объекта
+void TInterpreter::AssignField(TObject * obj, const SemNode * field,
+                               const Value & v, int line, int col,
+                               const char * scope, const std::string & name) {
+    if (obj == NULL)
+        throw TRunError("присваивание полю несуществующего объекта", line, col);
+
+    Value * f = obj->Find(const_cast<SemNode *>(field));
+    if (f == NULL)
+        throw TRunError("в объекте класса \"" + obj->clsName +
+                        "\" нет поля \"" + field->id + "\"", line, col);
+
+    Value cv = Convert(v, field->type, line, col);
+    *f = cv;
+
+    TraceAssign(name, ValueToString(cv), TypeName(field->type),
+                line, col, scope);
 }
 
 // напечатать значения всех переменных, у которых есть значение
@@ -212,7 +275,12 @@ void TInterpreter::PrintValues(Tree * node, FILE * f) {
     if (node == NULL || f == NULL)
         return;
     for (Tree * p = node->Left; p != NULL; p = p->Right) {
-        if (p->n != NULL && p->n->val.has &&
+        // поля классов печатаются только в составе объектов
+        bool isField = (p->n != NULL && p->n->self != NULL &&
+                        p->n->self->Up != NULL &&
+                        p->n->self->Up->n != NULL &&
+                        p->n->self->Up->n->type == TYPE_CLASS);
+        if (!isField && p->n != NULL && p->n->val.has &&
             (p->n->type == TYPE_INT || p->n->type == TYPE_FLOAT ||
              p->n->type == TYPE_BOOL)) {
             fprintf(f, "  %s = %s (%s)\n",

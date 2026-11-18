@@ -101,6 +101,14 @@ static void CollectFromTrace(std::vector<std::pair<std::string, std::string> > &
         size_t eq = line.find(" = ");
         size_t sp = line.rfind(" (");
         if (eq != std::string::npos && sp != std::string::npos && sp > eq + 3) {
+            std::string type = line.substr(sp + 2);
+            if (!type.empty() && type[type.size() - 1] == ')')
+                type.erase(type.size() - 1);
+            // копирование объектов не является значением переменной
+            if (type != "int" && type != "float" && type != "bool") {
+                pos = end;
+                continue;
+            }
             std::string name = line.substr(0, eq);
             std::string val  = line.substr(eq + 3, sp - (eq + 3));
             bool found = false;
@@ -354,6 +362,93 @@ static void RunTraceTests() {
         Fail("трассировка: пропущенная ветвь не выполняется");
 }
 
+// проверка подписи объекта в трассировке: класс и имя переменной
+static void RunObjectTraceTests() {
+    std::vector<std::pair<std::string, std::string> > values;
+    TError  err("", 0, 0);
+    ErrKind kind = EK_ANY;
+
+    // два объекта одного класса различаются в трассировке
+    values.clear();
+    Run("int n = 0;\n"
+        "class G\n"
+        "{\n"
+        "public:\n"
+        "    ~G()\n"
+        "    {\n"
+        "        n = n + 1;\n"
+        "    }\n"
+        "}\n"
+        "G g1, g2;\n"
+        "void main()\n"
+        "{\n"
+        "    int a = 1;\n"
+        "}\n", values, err, kind);
+    std::string t = ReadFile(TraceFile());
+    if (t.find("[G g1]") != std::string::npos &&
+        t.find("[G g2]") != std::string::npos)
+        Ok("трассировка объектов: класс и имя переменной");
+    else
+        Fail("трассировка объектов: класс и имя переменной");
+
+    // копирование объекта тоже попадает в трассировку
+    values.clear();
+    Run("class P\n"
+        "{\n"
+        "public:\n"
+        "    int x;\n"
+        "    P()\n"
+        "    {\n"
+        "        x = 1;\n"
+        "    }\n"
+        "}\n"
+        "void main()\n"
+        "{\n"
+        "    P a;\n"
+        "    P b;\n"
+        "    b.x = 7;\n"
+        "    a = b;\n"
+        "    int v = a.x;\n"
+        "}\n", values, err, kind);
+    t = ReadFile(TraceFile());
+    if (t.find("Присваивание: a = b (P)") != std::string::npos)
+        Ok("трассировка объектов: копирование объекта");
+    else
+        Fail("трассировка объектов: копирование объекта");
+
+    if (t.find("Копирование: a.x = b.x, значение 7 (int)") != std::string::npos)
+        Ok("трассировка объектов: копирование полей");
+    else
+        Fail("трассировка объектов: копирование полей");
+
+    // вложенный объект подписывается путём к полю
+    values.clear();
+    Run("class B\n"
+        "{\n"
+        "public:\n"
+        "    int v;\n"
+        "    B()\n"
+        "    {\n"
+        "        v = 1;\n"
+        "    }\n"
+        "}\n"
+        "class A\n"
+        "{\n"
+        "public:\n"
+        "    B b;\n"
+        "}\n"
+        "void main()\n"
+        "{\n"
+        "    A o;\n"
+        "    o.b.v = 2;\n"
+        "}\n", values, err, kind);
+    t = ReadFile(TraceFile());
+    if (t.find("[B o.b]") != std::string::npos)
+        Ok("трассировка объектов: путь к полю-объекту");
+    else
+        Fail("трассировка объектов: путь к полю-объекту");
+}
+
 // проверка ошибок выполнения, не связанных с классами
 static void RunErrorTests() {
     std::vector<std::pair<std::string, std::string> > values;
@@ -569,9 +664,11 @@ int main(int argc, char * argv[]) {
     const char * path = (argc > 1) ? argv[1] : "tests/test_programs.txt";
 
     RunProgramTests(path);
+    RunProgramTests("tests/oop_programs.txt");
     RunTraceTests();
     RunWarningTests();
     RunTreeTraceTests();
+    RunObjectTraceTests();
     RunErrorTests();
 
     printf("\nИтого: %d из %d тестов пройдено", testsPassed, testsTotal);

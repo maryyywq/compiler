@@ -2,6 +2,7 @@
 
 #include "defs.h"
 #include <string>
+#include <vector>
 
 // типы объектов и значений в семантическом дереве
 enum DATA_TYPE {
@@ -18,14 +19,18 @@ enum DATA_TYPE {
 // Запись семантической таблицы (узел семантического дерева)
 class Tree;
 
+// объект класса, созданный интерпретатором
+struct TObject;
+
 // значение данных, вычисленное интерпретатором
 struct Value {
     DATA_TYPE type;   // тип значения
     bool      has;    // значение вычислено
     union {
-        int   i;      // значение для TYPE_INT
-        float f;      // значение для TYPE_FLOAT
-        bool  b;      // значение для TYPE_BOOL
+        int      i;   // значение для TYPE_INT
+        float    f;   // значение для TYPE_FLOAT
+        bool     b;   // значение для TYPE_BOOL
+        TObject *obj; // значение для TYPE_OBJECT
     };
 
     Value() : type(TYPE_VOID), has(false), i(0) {}
@@ -33,6 +38,7 @@ struct Value {
     static Value Int(int v)     { Value r; r.type = TYPE_INT;   r.has = true; r.i = v; return r; }
     static Value Float(float v) { Value r; r.type = TYPE_FLOAT; r.has = true; r.f = v; return r; }
     static Value Bool(bool v)   { Value r; r.type = TYPE_BOOL;  r.has = true; r.b = v; return r; }
+    static Value Object(TObject * o) { Value r; r.type = TYPE_OBJECT; r.has = true; r.obj = o; return r; }
 };
 
 // текстовое представление значения для вывода и тестов: 5, 2.5, true
@@ -47,11 +53,27 @@ struct SemNode {
     SemNode    *ref;      // ссылка на запись класса 
     Tree       *self;     // вершина дерева, в которой находится запись
     Value       val;      // значение, вычисленное интерпретатором
+    int         bodyPos;  // позиция '{' тела метода в исходном модуле
+    int         bodyLine; // строка начала тела метода
 
     SemNode(const std::string & a, DATA_TYPE t, int l, int c,
             SemNode * r = NULL)
         : id(a), type(t), isPrivate(false), line(l), col(c),
-          ref(r), self(NULL) {}
+          ref(r), self(NULL), bodyPos(-1), bodyLine(0) {}
+};
+
+// Объект класса: собственные значения полей каждого экземпляра
+struct TObject {
+    std::string clsName;   // имя класса
+    std::string name;      // имя переменной или путь к полю: g1, o.b
+    std::string scopeName; // подпись для трассировки: G g1
+    Tree       *clsTree;   // вершина класса в семантическом дереве
+    std::vector<std::pair<SemNode *, Value> > fields; // поле -> значение
+
+    TObject() : clsTree(NULL) {}
+
+    // значение поля объекта по записи поля класса
+    Value * Find(SemNode * field);
 };
 
 // Древовидная таблица символов: Left - первый внутренний элемент, Right - следующий на уровне

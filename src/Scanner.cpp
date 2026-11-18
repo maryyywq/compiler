@@ -20,6 +20,7 @@ static int KeywordTypes[MAX_KEYW] = {
 // конструктор: загружает текст и ставит указатель в начало
 TScanner::TScanner(const char * FileName) {
     getData(FileName);
+    fileName = FileName;
     pos     = 0;
     line    = 1;
     tokPos  = 0;

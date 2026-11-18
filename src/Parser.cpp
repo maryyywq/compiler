@@ -59,7 +59,8 @@ static bool IsNum(DATA_TYPE t) {
 // Конструктор привязывает сканер, создаёт корень дерева и читает первую лексему
 TParser::TParser(TScanner * s, bool semantics, bool interpret, bool trace)
     : sc(s), semOn(semantics), interpOn(interpret), treeTrace(trace),
-      exec(true), scope("global"), memberPrivate(false) {
+      exec(true), scope("global"), curObj(NULL), fileName(s->GetFileName()),
+      memberPrivate(false) {
     root = new Tree(NULL, NULL, NULL, new SemNode("", TYPE_SCOPE, 1, 1));
     if (semOn)
         Tree::Cur = root;
@@ -142,6 +143,14 @@ bool TParser::isVarDeclStart() {
 void TParser::Program() {
     while (t != T_END)
         TopDecl();
+
+    // после завершения программы удаляются глобальные объекты (вызываются деструкторы)
+    if (interpOn && exec) {
+        Tree * top = Tree::Cur;
+        while (top != NULL && top->Up != NULL)
+            top = top->Up;
+        DestroyScopeObjects(top);
+    }
 }
 
 // 2) Описания (на верхнем уровне) - TopDecl: TopDecl -> ClassDecl | VarDecl | MainFunc
@@ -198,20 +207,30 @@ void TParser::ClassMemberList(SemNode * clsRec, const std::string & clsName) {
 void TParser::ClassMember(SemNode * clsRec, const std::string & clsName) {
     if (t == KW_PUBLIC || t == KW_PRIVATE) {
         AccessSpec();
+        return;
     }
-    else if (t == KW_VOID) {            // Метод: void IDENT ( ) Block
+
+    Tree * mNode = NULL;
+
+    if (t == KW_VOID) {                 // Метод: void IDENT ( ) Block
         next();
         std::string name = lex;
         int l = sc->getTokLine();
         int c = sc->getCol();
         if (semOn) {
-            Tree * m = Tree::Cur->SemInclude(name, TYPE_FUNCT, l, c);
-            m->n->ref       = clsRec;
-            m->n->isPrivate = memberPrivate;
+            mNode = Tree::Cur->SemInclude(name, TYPE_FUNCT, l, c);
+            mNode->n->ref       = clsRec;
+            mNode->n->isPrivate = memberPrivate;
         }
         match(IDENT,  "имя метода");
         match(LPAREN, "(");
         match(RPAREN, ")");
+        int bodyPos  = sc->getTokPos();
+        int bodyLine = sc->getTokLine();
+        if (mNode != NULL) {
+            mNode->n->bodyPos  = bodyPos;
+            mNode->n->bodyLine = bodyLine;
+        }
         Block();
     }
     else if (t == TILDE) {              // Деструктор: ~ IDENT ( ) Block
@@ -225,13 +244,19 @@ void TParser::ClassMember(SemNode * clsRec, const std::string & clsName) {
                              "\" не совпадает с именем класса \"" +
                              clsName + "\"", l, c);
             }
-            Tree * m = Tree::Cur->SemInclude("~" + name, TYPE_FUNCT, l, c);
-            m->n->ref       = clsRec;
-            m->n->isPrivate = memberPrivate;
+            mNode = Tree::Cur->SemInclude("~" + name, TYPE_FUNCT, l, c);
+            mNode->n->ref       = clsRec;
+            mNode->n->isPrivate = memberPrivate;
         }
         match(IDENT,  "имя деструктора");
         match(LPAREN, "(");
         match(RPAREN, ")");
+        int bodyPos  = sc->getTokPos();
+        int bodyLine = sc->getTokLine();
+        if (mNode != NULL) {
+            mNode->n->bodyPos  = bodyPos;
+            mNode->n->bodyLine = bodyLine;
+        }
         Block();
     }
     else if (t == KW_INT || t == KW_FLOAT || t == KW_BOOL) {
@@ -248,13 +273,19 @@ void TParser::ClassMember(SemNode * clsRec, const std::string & clsName) {
                                  "\" не совпадает с именем класса \"" +
                                  clsName + "\"", l, c);
                 }
-                Tree * m = Tree::Cur->SemInclude(name, TYPE_FUNCT, l, c);
-                m->n->ref       = clsRec;
-                m->n->isPrivate = memberPrivate;
+                mNode = Tree::Cur->SemInclude(name, TYPE_FUNCT, l, c);
+                mNode->n->ref       = clsRec;
+                mNode->n->isPrivate = memberPrivate;
             }
             match(IDENT,  "имя конструктора");
             match(LPAREN, "(");
             match(RPAREN, ")");
+            int bodyPos  = sc->getTokPos();
+            int bodyLine = sc->getTokLine();
+            if (mNode != NULL) {
+                mNode->n->bodyPos  = bodyPos;
+                mNode->n->bodyLine = bodyLine;
+            }
             Block();
         }
         else {
@@ -366,11 +397,13 @@ void TParser::Block() {
         Tree * root = Tree::Cur;
         while (root->Up != NULL)
             root = root->Up;
-        fprintf(TInterpreter::out, "Значения переменных:\n");
-        TInterpreter::PrintValues(root, TInterpreter::out);
     }
 
     match(RBRACE, "}");
+
+    // объекты, объявленные в блоке, удаляются при выходе из области видимости
+    if (interpOn && exec)
+        DestroyScopeObjects(Tree::Cur);
 
     // при выходе из области видимости записи блока удаляются из дерева
     if (semOn)
@@ -423,8 +456,14 @@ void TParser::Stmt() {
         exec = savedExec;
     }
     else if (t == IDENT) {
-        LValueInfo lv = LValue();
-        StmtTail(lv);
+        if (lookAhead(1) == LPAREN) {
+            // вызов метода текущего объекта без указания объекта
+            CallOwnMethod();
+        }
+        else {
+            LValueInfo lv = LValue();
+            StmtTail(lv);
+        }
     }
     else {
         error("ожидался оператор");
@@ -445,15 +484,35 @@ void TParser::StmtTail(const LValueInfo & lv) {
         if (semOn)
             CheckAssign(lv.t, rt, l, c, "присваивании");
 
-        // выполнение присваивания: только для простых переменных
         if (interpOn && exec) {
-            if (!lv.simple)
-                throw TRunError("присваивание полям классов не поддерживается "
-                                "интерпретатором", lv.line, lv.col);
-            if (lv.t.type == TYPE_OBJECT)
-                throw TRunError("интерпретация объектов не поддерживается",
-                                lv.line, lv.col);
-            TInterpreter::Assign(lv.obj, rv, lv.line, lv.col, scope);
+            if (lv.t.type == TYPE_OBJECT) {
+                // объект копируется по полям
+                TObject * dst = NULL;
+                if (lv.simple) {
+                    if (lv.obj->val.has)
+                        dst = lv.obj->val.obj;
+                }
+                else if (lv.robj != NULL) {
+                    Value * fv = lv.robj->Find(lv.obj);
+                    if (fv != NULL && fv->has)
+                        dst = fv->obj;
+                }
+                if (rv.type != TYPE_OBJECT || rv.obj == NULL)
+                    throw TRunError("объекту можно присвоить только объект",
+                                    lv.line, lv.col);
+                std::string srcName = rv.obj->name.empty()
+                                      ? std::string("объект") : rv.obj->name;
+                TInterpreter::TraceAssign(lv.path, srcName, rv.obj->clsName,
+                                          lv.line, lv.col, scope);
+                CopyObject(dst, rv.obj, lv.line, lv.col);
+            }
+            else if (!lv.simple) {
+                TInterpreter::AssignField(lv.robj, lv.obj, rv,
+                                          lv.line, lv.col, scope, lv.path);
+            }
+            else {
+                TInterpreter::Assign(lv.obj, rv, lv.line, lv.col, scope);
+            }
         }
         match(SEMI, ";");
     }
@@ -462,15 +521,17 @@ void TParser::StmtTail(const LValueInfo & lv) {
         std::string name = lex;
         int l = sc->getTokLine();
         int c = sc->getCol();
-        // вызов методов при интерпретации не поддерживается
-        if (interpOn && exec)
-            throw TRunError("вызов методов не поддерживается интерпретатором",
-                            l, c);
         if (semOn) {
             Tree * m = Tree::Cur->SemFindMember(lv.obj, name, l, c);
             if (m->n->type != TYPE_FUNCT)
                 throw TSemError("\"" + name + "\" - не метод класса \""
                              + lv.obj->ref->id + "\"", l, c);
+            if (interpOn && exec) {
+                if (lv.receiver == NULL)
+                    throw TRunError("метод \"" + name + "\" вызывается у "
+                                    "объекта, который не создан", l, c);
+                RunMethod(m->n, lv.receiver, l, c);
+            }
         }
         match(IDENT,  "имя метода");
         match(LPAREN, "(");
@@ -480,6 +541,37 @@ void TParser::StmtTail(const LValueInfo & lv) {
     else {
         error("ожидался знак '=' или вызов метода");
     }
+}
+
+// Вызов метода текущего объекта: IDENT ( ) ;
+void TParser::CallOwnMethod() {
+    std::string name = lex;
+    int l = sc->getTokLine();
+    int c = sc->getCol();
+
+    if (semOn) {
+        SemNode * cls = Tree::Cur->EnclosingClass();
+        if (cls == NULL)
+            throw TSemError("вызов метода без объекта возможен только "
+                            "внутри метода класса", l, c);
+
+        SemNode * m = FindClassMember(cls, name, TYPE_FUNCT);
+        if (m == NULL)
+            throw TSemError("в классе \"" + cls->id + "\" нет метода \"" +
+                            name + "\"", l, c);
+
+        if (interpOn && exec) {
+            if (curObj == NULL)
+                throw TRunError("вызов метода без объекта вне выполняемого "
+                                "метода", l, c);
+            RunMethod(m, curObj, l, c);
+        }
+    }
+
+    match(IDENT,  "имя метода");
+    match(LPAREN, "(");
+    match(RPAREN, ")");
+    match(SEMI,   ";");
 }
 
 // 13) Ветвь else - ElseOpt: ElseOpt -> else Stmt | eps
@@ -501,7 +593,24 @@ LValueInfo TParser::LValue() {
         Tree * v = Tree::Cur->SemGetVar(lex, info.line, info.col);
         info.t          = TypeInfo(v->n->type, v->n->ref);
         info.obj        = v->n;
+        info.path       = v->n->id;
         info.assignable = true;
+
+        if (interpOn && curObj != NULL && v->n->self != NULL &&
+            v->n->self->Up == curObj->clsTree) {
+            // поле текущего объекта: значение хранится в объекте
+            info.simple = false;
+            info.robj   = curObj;
+            if (v->n->type == TYPE_OBJECT) {
+                Value * fv = curObj->Find(v->n);
+                if (fv != NULL && fv->has && fv->obj != NULL)
+                    info.receiver = fv->obj;
+            }
+        }
+        else if (v->n->type == TYPE_OBJECT && v->n->val.has &&
+                 v->n->val.obj != NULL) {
+            info.receiver = v->n->val.obj;   // объект для вызова методов и полей
+        }
     }
     else {
         info.t          = TypeInfo(TYPE_INT);
@@ -533,6 +642,26 @@ LValueInfo TParser::LValue() {
             if (m->n->type == TYPE_FUNCT)
                 throw TSemError("\"" + field + "\" - метод класса, "
                              "для вызова нужны круглые скобки", l, c);
+
+            info.path += "." + field;
+
+            // объект, в котором хранится поле
+            TObject * container = (info.t.type == TYPE_OBJECT)
+                                  ? info.receiver : info.robj;
+            if (interpOn && container != NULL) {
+                if (m->n->type == TYPE_OBJECT) {
+                    Value * fv = container->Find(m->n);
+                    if (fv == NULL || !fv->has || fv->obj == NULL)
+                        throw TRunError("объект-поле \"" + field +
+                                        "\" не создан", l, c);
+                    info.receiver = fv->obj;
+                }
+                else {
+                    info.receiver = NULL;
+                }
+                info.robj = container;
+            }
+
             info.t          = TypeInfo(m->n->type, m->n->ref);
             info.obj        = m->n;
             info.assignable = true;
@@ -753,14 +882,11 @@ TypeInfo TParser::Prim() {
     if (t == IDENT) {
         LValueInfo lv = LValue();
         if (interpOn && exec) {
-            // интерпретируются только простые переменные без полей классов
             if (!lv.simple)
-                throw TRunError("обращение к полям классов не поддерживается "
-                                "интерпретатором", lv.line, lv.col);
-            if (lv.t.type == TYPE_OBJECT)
-                throw TRunError("интерпретация объектов не поддерживается",
-                                lv.line, lv.col);
-            lastValue = TInterpreter::Load(lv.obj, lv.line, lv.col);
+                lastValue = TInterpreter::LoadField(lv.robj, lv.obj,
+                                                    lv.line, lv.col);
+            else
+                lastValue = TInterpreter::Load(lv.obj, lv.line, lv.col);
         }
         else {
             lastValue = Value();
@@ -827,8 +953,14 @@ void TParser::IdInit(const TypeInfo & ti, bool classMember) {
     Value    initValue;
     if (t == ASSIGN) {
         next();
+        // инициализатор поля вычисляется сразу: значение хранится как значение по умолчанию
+        bool evalField = classMember && interpOn && !exec;
+        if (evalField)
+            exec = true;
         initType  = Expr();
         initValue = lastValue;
+        if (evalField)
+            exec = false;
         hasInit   = true;
     }
 
@@ -853,15 +985,251 @@ void TParser::IdInit(const TypeInfo & ti, bool classMember) {
             CheckAssign(ti, initType, l, c,
                         std::string("инициализации переменной \"") +
                         name + "\"");
-            // выполнение инициализации при интерпретации
-            if (interpOn && exec) {
-                if (ti.type == TYPE_OBJECT)
-                    throw TRunError("интерпретация объектов не поддерживается",
-                                    l, c);
+        }
+
+        // поле не может быть объектом своего же класса (бесконечное вложение)
+        if (classMember && ti.type == TYPE_OBJECT && ti.cls != NULL &&
+            Tree::Cur->EnclosingClass() == ti.cls)
+            throw TSemError("класс \"" + ti.cls->id + "\" не может содержать "
+                            "поле своего типа", l, c);
+
+        // контроль доступа к конструктору при создании объекта
+        if (ti.type == TYPE_OBJECT && ti.cls != NULL) {
+            SemNode * ctor = FindCtor(ti.cls);
+            if (ctor != NULL && ctor->isPrivate && Tree::Cur->EnclosingClass() != ti.cls)
+                throw TSemError("конструктор класса \"" + ti.cls->id +
+                             "\" объявлен как private и недоступен вне класса",
+                             l, c);
+        }
+
+        if (classMember) {
+            // значение инициализатора поля запоминается для создания объектов
+            if (hasInit && ti.type == TYPE_OBJECT)
+                throw TSemError("инициализация поля-объекта не поддерживается",
+                                l, c);
+            if (interpOn && hasInit)
+                v->n->val = TInterpreter::Convert(initValue, ti.type, l, c);
+        }
+        else if (interpOn && exec) {
+            if (ti.type == TYPE_OBJECT) {
+                TObject * o = CreateObject(ti.cls, l, c, name);
+                v->n->val = Value::Object(o);
+                if (hasInit) {
+                    if (initValue.type == TYPE_OBJECT && initValue.obj != NULL)
+                        CopyObject(o, initValue.obj, l, c);
+                    else
+                        throw TRunError("объект можно инициализировать только "
+                                        "объектом того же класса", l, c);
+                }
+            }
+            else if (hasInit) {
                 TInterpreter::Assign(v->n, initValue, l, c, scope);
             }
         }
     }
+}
+
+// Поиск члена класса по имени и типу (поле, метод, конструктор)
+SemNode * TParser::FindClassMember(SemNode * cls, const std::string & name,
+                                   DATA_TYPE type) {
+    if (cls == NULL || cls->self == NULL)
+        return NULL;
+    for (Tree * p = cls->self->Left; p != NULL; p = p->Right)
+        if (p->n != NULL && p->n->type == type && p->n->id == name)
+            return p->n;
+    return NULL;
+}
+
+// Конструктор класса (имя совпадает с именем класса) или NULL
+SemNode * TParser::FindCtor(SemNode * cls) {
+    if (cls == NULL)
+        return NULL;
+    return FindClassMember(cls, cls->id, TYPE_FUNCT);
+}
+
+// Деструктор класса (~Имя) или NULL
+SemNode * TParser::FindDtor(SemNode * cls) {
+    if (cls == NULL)
+        return NULL;
+    return FindClassMember(cls, "~" + cls->id, TYPE_FUNCT);
+}
+
+// Создание объекта: поля с значениями по умолчанию, вложенные объекты, конструктор
+TObject * TParser::CreateObject(SemNode * cls, int line, int col,
+                                 const std::string & name) {
+    if (cls == NULL || cls->self == NULL)
+        throw TRunError("неизвестный класс объекта", line, col);
+
+    TObject * o = new TObject();
+    o->clsName = cls->id;
+    o->name    = name;
+    o->scopeName = cls->id + (name.empty() ? "" : " " + name);
+    o->clsTree = cls->self;
+
+    for (Tree * p = cls->self->Left; p != NULL; p = p->Right) {
+        SemNode * f = p->n;
+        if (f == NULL)
+            continue;
+        if (f->type != TYPE_INT && f->type != TYPE_FLOAT &&
+            f->type != TYPE_BOOL && f->type != TYPE_OBJECT)
+            continue;
+
+        Value def;
+        if (f->type == TYPE_OBJECT) {
+            // поле-объект создаётся до вызова конструктора внешнего класса
+            TObject * sub = CreateObject(f->ref, f->line, f->col,
+                                         name.empty() ? f->id
+                                                      : name + "." + f->id);
+            def = Value::Object(sub);
+        }
+        else if (f->val.has) {
+            def = f->val;   // значение из инициализатора поля
+        }
+        o->fields.push_back(std::make_pair(f, def));
+    }
+
+    SemNode * ctor = FindCtor(cls);
+    if (ctor != NULL) {
+        if (ctor->isPrivate && Tree::Cur->EnclosingClass() != cls) {
+            delete o;
+            throw TSemError("конструктор класса \"" + cls->id +
+                            "\" объявлен как private и недоступен вне класса",
+                            line, col);
+        }
+        RunMethod(ctor, o, line, col);
+    }
+    return o;
+}
+
+// Удаление объекта: деструктор, затем поля-объекты в обратном порядке
+void TParser::DestroyObject(TObject * obj) {
+    if (obj == NULL)
+        return;
+
+    SemNode * dtor = FindDtor(obj->clsTree->n);
+    if (dtor != NULL) {
+        if (dtor->isPrivate && Tree::Cur->EnclosingClass() != obj->clsTree->n)
+            throw TSemError("деструктор класса \"" + obj->clsName +
+                            "\" объявлен как private и недоступен вне класса",
+                            dtor->line, dtor->col);
+        RunMethod(dtor, obj, dtor->line, dtor->col);
+    }
+
+    for (int i = (int)obj->fields.size() - 1; i >= 0; i--) {
+        Value & v = obj->fields[i].second;
+        if (v.type == TYPE_OBJECT && v.has && v.obj != NULL) {
+            DestroyObject(v.obj);
+            v.obj = NULL;
+            v.has = false;
+        }
+    }
+    delete obj;
+}
+
+// Копирование объекта по полям
+void TParser::CopyObject(TObject * dst, TObject * src, int line, int col) {
+    if (dst == NULL || src == NULL)
+        throw TRunError("присваивание объекта, который не создан", line, col);
+    if (dst->clsName != src->clsName)
+        throw TRunError("нельзя присвоить объект класса \"" + src->clsName +
+                        "\" объекту класса \"" + dst->clsName + "\"",
+                        line, col);
+
+    for (size_t i = 0; i < dst->fields.size(); i++) {
+        SemNode * f = dst->fields[i].first;
+        Value * sv = src->Find(f);
+        if (sv == NULL || !sv->has)
+            continue;
+
+        std::string dstPath = dst->name.empty() ? f->id
+                                                : dst->name + "." + f->id;
+        std::string srcPath = src->name.empty() ? f->id
+                                                : src->name + "." + f->id;
+        if (f->type == TYPE_OBJECT) {
+            if (sv->obj != NULL) {
+                TInterpreter::TraceCopy(dstPath, srcPath,
+                                        std::string("объект ") + f->ref->id,
+                                        "объект", line, col, scope);
+                CopyObject(dst->fields[i].second.obj, sv->obj, line, col);
+            }
+        }
+        else {
+            dst->fields[i].second = *sv;
+            TInterpreter::TraceCopy(dstPath, srcPath, ValueToString(*sv),
+                                    TypeName(f->type), line, col, scope);
+        }
+    }
+}
+
+// Удаление объектов, объявленных непосредственно в области видимости
+void TParser::DestroyScopeObjects(Tree * scope) {
+    if (scope == NULL)
+        return;
+
+    std::vector<Tree *> kids;
+    for (Tree * p = scope->Left; p != NULL; p = p->Right)
+        kids.push_back(p);
+
+    for (int i = (int)kids.size() - 1; i >= 0; i--) {
+        SemNode * n = kids[i]->n;
+        if (n != NULL && n->type == TYPE_OBJECT && n->val.has &&
+            n->val.obj != NULL) {
+            DestroyObject(n->val.obj);
+            n->val.obj = NULL;
+            n->val.has = false;
+        }
+    }
+}
+
+// Выполнение тела метода, конструктора или деструктора для объекта obj
+void TParser::RunMethod(SemNode * m, TObject * obj, int line, int col) {
+    if (m == NULL || m->bodyPos < 0)
+        throw TRunError("тело метода не найдено", line, col);
+
+    // защита от бесконечной рекурсии методов
+    static int depth = 0;
+    if (depth >= 200)
+        throw TRunError("превышена допустимая глубина вызовов методов "
+                        "(возможна бесконечная рекурсия)", line, col);
+    struct DepthGuard {
+        DepthGuard()  { depth++; }
+        ~DepthGuard() { depth--; }
+    } guard;
+
+    // состояние текущего разбора сохраняется до создания вложенного парсера
+    TObject   * savedObj   = curObj;
+    Tree      * savedCur   = Tree::Cur;
+    const char* savedScope = scope;
+
+    TScanner * ms = new TScanner(fileName.c_str());
+    ms->setPos(m->bodyPos);
+    ms->setLine(m->bodyLine);
+    TParser * mp = new TParser(ms, true, true, false);
+
+    mp->curObj = obj;
+    mp->scope  = (obj != NULL) ? obj->scopeName.c_str() : "method";
+    Tree::Cur  = (obj != NULL) ? obj->clsTree : savedCur;
+
+    try {
+        mp->Block();
+    }
+    catch (...) {
+        delete mp;
+        delete ms;
+        Tree::Cur = savedCur;
+        curObj    = savedObj;
+        scope     = savedScope;
+        throw;
+    }
+
+    // вложенный парсер удаляется до восстановления текущей области:
+    // деструктор его корня не должен обнулить Tree::Cur
+    delete mp;
+    delete ms;
+
+    Tree::Cur = savedCur;
+    curObj    = savedObj;
+    scope     = savedScope;
 }
 
 // Семантические подпрограммы контроля контекстных условий

@@ -1,13 +1,55 @@
+int count = 0;
+
+class Bar {
+    int a = 3, c = 4;
+
+    void potapim() {
+        count = -999;
+    }
+}
+
+class Foo {
+    Foo() {
+        count = count + 1;
+    }
+    ~Foo() {
+        count = count - 1;
+    }
+
+    bool publ = true;
+
+    Bar bar;
+
+private:
+    int a = -1, b = 1;
+
+    void double_secret() {
+        count = count * 10;
+    }
+public:
+    void double() {
+        double_secret();
+    }
+    void aplus() {
+        a = a + 1;
+        b = b * 10;
+    }
+}
+
 void main()
 {
-    float a = 1 + 2.5;
-    float b = 5 / 2.0;
-    int c = 5 / 2;
-    float d = 5 / 2;
-    int e = 7.9 + 1;
-    float f = (1 + 2) * 1.5;
-    int g = 2 * 3.5;
-    bool h = 1 < 1.5;
-    bool i = 2 == 2.0;
-    float j = -2.5 + 1;
+    Foo f2, f3;
+    f2.aplus();
+
+    f2.bar.potapim();
+
+    f2 = f3;
+
+    f2.aplus();
+
+    if (f2.publ) {
+        f2.publ = false;
+    }
+
+    count = 100;
 }

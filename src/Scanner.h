@@ -6,6 +6,7 @@
 class TScanner {
 private:
     TypeMod text;    // текст исходного модуля целиком
+    std::string fileName; // имя исходного модуля (для повторного разбора)
     int     pos;     // текущая позиция в тексте
     int     line;    // текущая строка исходного модуля
     int     tokPos;  // позиция начала текущей (последней прочитанной) лексемы
@@ -26,6 +27,9 @@ public:
     int  getCol()     { return ColOf(tokPos); }
     void setTokPos(int i)  { tokPos  = i; }
     void setTokLine(int i) { tokLine = i; }
+
+    // имя исходного модуля
+    const char * GetFileName() { return fileName.c_str(); }
 
     // номер позиции в строке (с 1) для символа с индексом at
     int  ColOf(int at);

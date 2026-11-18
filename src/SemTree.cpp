@@ -4,6 +4,14 @@
 // Текущая область видимости (текущая вершина семантического дерева)
 Tree * Tree::Cur = NULL;
 
+// Значение поля объекта по записи поля класса
+Value * TObject::Find(SemNode * field) {
+    for (size_t i = 0; i < fields.size(); i++)
+        if (fields[i].first == field)
+            return &fields[i].second;
+    return NULL;
+}
+
 // Текстовое представление значения для вывода и тестов
 std::string ValueToString(const Value & v) {
     char buf[64];

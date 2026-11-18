@@ -32,12 +32,31 @@ public:
     // унарная операция: + - !
     static Value Unary(const std::string & op, const Value & a, int line, int col);
 
+    // напечатать строку трассировки присваивания
+    static void TraceAssign(const std::string & name, const std::string & value,
+                            const std::string & type, int line, int col,
+                            const char * scope);
+
+    // напечатать строку трассировки копирования поля объекта
+    static void TraceCopy(const std::string & dst, const std::string & src,
+                          const std::string & value, const std::string & type,
+                          int line, int col, const char * scope);
+
     // записать значение в переменную с приведением и трассировкой
     static void Assign(SemNode * var, const Value & v, int line, int col,
                        const char * scope);
 
     // прочитать значение переменной, ошибка если значение не задано
     static Value Load(const SemNode * var, int line, int col);
+
+    // прочитать значение поля объекта; name - путь для сообщений об ошибках
+    static Value LoadField(TObject * obj, const SemNode * field,
+                           int line, int col);
+
+    // записать значение в поле объекта с приведением и трассировкой
+    static void AssignField(TObject * obj, const SemNode * field,
+                            const Value & v, int line, int col,
+                            const char * scope, const std::string & name);
 
     // напечатать значения всех инициализированных переменных дерева
     static void PrintValues(Tree * root, FILE * f);

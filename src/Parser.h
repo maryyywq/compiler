@@ -17,13 +17,17 @@ struct TypeInfo {
 
 // сведения о левом выражении: тип, объект для вызова метода, допустимость присваивания и позиция
 struct LValueInfo {
-    TypeInfo  t;           // тип значения левого выражения
-    SemNode * obj;         // запись переменной или последнего поля цепочки
-    bool      assignable;  // можно ли присваивать значение (переменная или поле)
-    bool      simple;      // true - простая переменная без обращений к полям
-    int       line, col;   // позиция начала левого выражения
+    TypeInfo    t;           // тип значения левого выражения
+    SemNode   * obj;         // запись переменной или последнего поля цепочки
+    TObject   * robj;        // объект, в котором хранится поле (NULL для простой переменной)
+    TObject   * receiver;    // объект-значение левого выражения (для вызова метода)
+    bool        assignable;  // можно ли присваивать значение (переменная или поле)
+    bool        simple;      // true - простая переменная без обращений к полям
+    std::string path;        // путь для трассировки: p.x
+    int         line, col;   // позиция начала левого выражения
 
-    LValueInfo() : obj(NULL), assignable(false), simple(true), line(0), col(0) {}
+    LValueInfo() : obj(NULL), robj(NULL), receiver(NULL),
+                   assignable(false), simple(true), line(0), col(0) {}
 };
 
 // синтаксический и семантический анализатор, построенный методом рекурсивного спуска
@@ -35,8 +39,10 @@ private:
     bool       interpOn; // выполнять ли интерпретацию (вычисление значений)
     bool       treeTrace;// печатать ли дерево при входе в блок и выходе из него
     bool       exec;     // флаг интерпретации: выполняется ли текущий фрагмент
-    const char * scope;  // имя текущей области для трассировки: global или main
+    const char * scope;  // имя текущей области для трассировки: global, main или класс
     Value      lastValue;// значение последнего разобранного выражения
+    TObject   * curObj;  // объект, чей метод выполняется (NULL вне методов)
+    std::string fileName;// исходный модуль для повторного разбора тел методов
     int        t;        // тип текущей лексемы
     LEX        lex;      // изображение текущей лексемы
 
@@ -65,6 +71,7 @@ private:
     void Block();            // 10) блок
     void Stmt();             // 11) оператор
     void StmtTail(const LValueInfo & lv); // 12) окончание оператора
+    void CallOwnMethod();    // вызов метода текущего объекта: IDENT ( ) ;
     void ElseOpt();          // 13) ветвь else
     LValueInfo LValue();     // 14) левое выражение
     TypeInfo Expr();         // 15) выражение
@@ -80,6 +87,18 @@ private:
     // список объявляемых переменных и одна переменная с необязательной инициализацией
     void IdInitList(const TypeInfo & ti, bool classMember);
     void IdInit(const TypeInfo & ti, bool classMember);
+
+    // работа с объектами классов
+    TObject * CreateObject(SemNode * cls, int line, int col,
+                           const std::string & name);
+    void      DestroyObject(TObject * obj);
+    void      CopyObject(TObject * dst, TObject * src, int line, int col);
+    void      DestroyScopeObjects(Tree * scope);
+    void      RunMethod(SemNode * m, TObject * obj, int line, int col);
+    SemNode * FindClassMember(SemNode * cls, const std::string & name,
+                              DATA_TYPE type);
+    SemNode * FindCtor(SemNode * cls);
+    SemNode * FindDtor(SemNode * cls);
 
     // семантические подпрограммы контроля типов
     TypeInfo BinaryNum(const TypeInfo & a, const TypeInfo & b,

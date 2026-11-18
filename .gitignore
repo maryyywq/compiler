@@ -8,3 +8,6 @@ tests/run_interp_tests
 # временные файлы
 .scratch/
 .venv/
+
+# файлы для ручного тестирования
+*.txt
